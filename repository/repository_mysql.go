@@ -9,21 +9,33 @@ import (
 	"github.com/mkideal/pkg/debug"
 )
 
-const createTableEmail = "CREATE TABLE IF NOT EXISTS email (" +
-	"`id` INT NOT NULL AUTO_INCREMENT," +
-	"`from` varchar(64) NOT NULL," +
-	"`tos` text NOT NULL," +
-	"`data` blob," +
-	"PRIMARY KEY ( id )" +
-	")"
+const (
+	sqlCreateDatabase = "CREATE DATABASE IF NOT EXISTS `smtpd` ENGINE=InnoDB DEFAULT CHARSET=utf8"
 
-const createTableMailbox = "CREATE TABLE IF NOT EXISTS mailbox(" +
-	"`id` INT NOT NULL AUTO_INCREMENT," +
-	"`username` varchar(64) NOT NULL," +
-	"`address` varchar(64) NOT NULL," +
-	"`create_date` varchar(32) NOT NULL," +
-	"PRIMARY KEY ( id )" +
-	")"
+	sqlUseDatabase = "USE smtpd"
+
+	sqlCreateTableEmail = "CREATE TABLE IF NOT EXISTS email (" +
+		"`id` INT NOT NULL AUTO_INCREMENT," +
+		"`username` varchar(64) NOT NULL," +
+		"`from` varchar(64) NOT NULL," +
+		"`tos` text NOT NULL," +
+		"`data` blob," +
+		"PRIMARY KEY ( id )" +
+		"FOREIGN KEY ( username ) REFERENCES mailbox ( username )" +
+		")"
+
+	sqlCreateTableMailbox = "CREATE TABLE IF NOT EXISTS mailbox(" +
+		"`id` INT NOT NULL AUTO_INCREMENT," +
+		"`username` varchar(64) NOT NULL," +
+		"`address` varchar(64) NOT NULL," +
+		"`create_date` varchar(32) NOT NULL," +
+		"PRIMARY KEY ( id )" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8"
+
+	sqlFindMailbox = `SELECT username,address FROM mailbox WHERE username=? OR address=?`
+
+	sqlSaveEmail = "INSERT INTO email(`account`,`from`,`tos`,`data`) values(?,?,?,?)"
+)
 
 type MysqlRepository struct {
 	locker sync.Mutex
@@ -39,10 +51,10 @@ func Mysql(dbsource string) (*MysqlRepository, error) {
 	repo := new(MysqlRepository)
 	repo.db = db
 	if err := multiExec(db,
-		"CREATE DATABASE IF NOT EXISTS `smtpd`",
-		"USE smtpd",
-		createTableEmail,
-		createTableMailbox,
+		sqlCreateDatabase,
+		sqlUseDatabase,
+		sqlCreateTableEmail,
+		sqlCreateTableMailbox,
 	); err != nil {
 		return nil, err
 	}
@@ -50,11 +62,9 @@ func Mysql(dbsource string) (*MysqlRepository, error) {
 }
 
 func (repo *MysqlRepository) FindMailbox(usernameOrAddress string) (*mail.Address, bool) {
-	sqlStr := `select username,address from mailbox where username="` +
-		usernameOrAddress + `" or address="` + usernameOrAddress + `"`
-	rows, err := repo.db.Query(sqlStr)
+	rows, err := repo.db.Query(sqlFindMailbox, usernameOrAddress, usernameOrAddress)
 	if err != nil {
-		debug.Debugf("Query %q error: %v", sqlStr, err)
+		debug.Debugf("Query %q error: %v", sqlFindMailbox, err)
 		return nil, false
 	}
 	addr := &mail.Address{}
@@ -68,7 +78,7 @@ func (repo *MysqlRepository) FindMailbox(usernameOrAddress string) (*mail.Addres
 	return nil, false
 }
 
-func (repo *MysqlRepository) SaveEmail(from, tos string, data []byte) error {
+func (repo *MysqlRepository) SaveEmail(addr *mail.Address, from, tos string, data []byte) error {
 	if data == nil {
 		data = []byte{}
 	}
@@ -76,8 +86,8 @@ func (repo *MysqlRepository) SaveEmail(from, tos string, data []byte) error {
 	repo.locker.Lock()
 	defer repo.locker.Unlock()
 
-	sqlStr := "insert into email(`from`,`tos`,`data`) values(?,?,?)"
-	_, err := repo.db.Exec(sqlStr, from, tos, data)
+	sqlStr := "insert into email(`account`,`from`,`tos`,`data`) values(?,?,?,?)"
+	_, err := repo.db.Exec(sqlStr, addr.Name, from, tos, data)
 	if err != nil {
 		debug.Debugf("SaveEmail error: %v", err)
 	}

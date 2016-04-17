@@ -6,7 +6,6 @@ const (
 	stateReady
 	stateMailInput
 	stateAuth
-	stateExpectCmdEhlo
 	stateExpectCmdAuth
 	stateExpectCmdMail
 	stateExpectCmdRcpt

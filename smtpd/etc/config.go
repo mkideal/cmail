@@ -22,6 +22,7 @@ type Config struct {
 	MaxErrorSize   int    `yaml:"max_error_size" cli:"max-error-size" usage:"max size of errors" dft:"3"`
 	MaxBufferSize  int    `yaml:"max_buffer_size" cli:"max-buffer-szie" usage:"max size of buffer" dft:"6553600"`
 	MaxRecipients  int    `yaml:"max_recipients" cli:"max-recipients" usage:"max size of recipients" dft:"256"`
+	AllowDelay     bool   `yaml:"allow_delay" cli:"allow-delay" usage:"allow delay email" dft:"false"`
 
 	S_ServiceInfo string `yaml:"service_info" cli:"-"`
 }

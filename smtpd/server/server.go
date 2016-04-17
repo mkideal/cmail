@@ -1,18 +1,19 @@
 package server
 
 import (
+	"crypto/tls"
 	"net"
 	"net/mail"
 	"sync"
 	"sync/atomic"
 
-	"github.com/mkideal/smtpd/etc"
+	"github.com/mkideal/cmail/smtpd/etc"
 )
 
 // Repository represents email repository
 type Repository interface {
 	FindMailbox(usernameOrAddress string) (*mail.Address, bool)
-	SaveEmail(from, tos string, data []byte) error
+	SaveEmail(addr *mail.Address, from, tos string, data []byte) error
 }
 
 //--------
@@ -20,7 +21,8 @@ type Repository interface {
 //--------
 
 type Server struct {
-	repo Repository
+	repo      Repository
+	tlsConfig *tls.Config
 
 	locker       sync.Mutex
 	sessions     map[uint64]*session
@@ -28,9 +30,28 @@ type Server struct {
 }
 
 func New(repo Repository) *Server {
+	return newServer(repo, "", "")
+}
+
+func NewWithTLS(repo Repository, certFile, keyFile string) *Server {
+	return newServer(repo, certFile, keyFile)
+}
+
+func newServer(repo Repository, certFile, keyFile string) *Server {
 	svr := new(Server)
 	svr.repo = repo
 	svr.sessions = make(map[uint64]*session)
+	if certFile != "" || keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil
+		}
+		svr.tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			ClientAuth:   tls.VerifyClientCertIfGiven,
+			ServerName:   etc.Conf().DomainName,
+		}
+	}
 	return svr
 }
 

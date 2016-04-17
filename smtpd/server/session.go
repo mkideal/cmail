@@ -2,16 +2,18 @@ package server
 
 import (
 	"bytes"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/mail"
+	//"net/smtp"
 	"net/textproto"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/mkideal/cmail/smtpd/etc"
 	"github.com/mkideal/pkg/debug"
-	"github.com/mkideal/smtpd/etc"
 )
 
 var (
@@ -58,10 +60,10 @@ var commands = map[string]command{
 	EXPN:     command{true, stateNone},
 	SIZE:     command{true, stateNone},
 	STARTTLS: command{true, stateNone},
-	AUTH:     command{true, stateNone},
+	AUTH:     command{true, stateExpectCmdAuth},
 
-	HELO: command{false, stateExpectCmdEhlo},
-	EHLO: command{false, stateExpectCmdEhlo},
+	HELO: command{false, stateNone},
+	EHLO: command{false, stateNone},
 	MAIL: command{false, stateExpectCmdMail},
 	RCPT: command{false, stateExpectCmdRcpt},
 	DATA: command{false, stateExpectCmdData},
@@ -144,6 +146,11 @@ func newSession(svr *Server, conn net.Conn) *session {
 	return s
 }
 
+func (s *session) setState(state int) {
+	s.state = state
+	debug.Debugf("session %d switch to state %x", s.id, state)
+}
+
 func (s *session) quit() {
 	s.svr.removeSession(s.id)
 	s.conn.Close()
@@ -151,7 +158,6 @@ func (s *session) quit() {
 
 func (s *session) run() {
 	s.conn.PrintfLine("%3d %s", CodeServiceReady, etc.Conf().S_ServiceInfo)
-	s.state = stateExpectCmdEhlo
 	for {
 		if s.errCount >= etc.Conf().MaxErrorSize {
 			s.quit()
@@ -298,14 +304,35 @@ func (s *session) complete() (quit bool) {
 			}
 			buf.WriteString(to.String())
 		}
-		err := s.svr.repo.SaveEmail(s.from.String(), buf.String(), s.data.Bytes())
-		if err != nil {
-			s.printf("%3d save email error", CodeLocalErrorInProcessing)
-			return
+		for _, to := range s.tos {
+			if domain := parseDomainFromAddress(to.Address); domain != etc.Conf().DomainName {
+				// forward mail
+				fromDomain := parseDomainFromAddress(s.from.Address)
+				if fromDomain != etc.Conf().DomainName && !etc.Conf().AllowDelay {
+					//TODO: handle the error
+					debug.Debugf("cannot delay mail")
+					continue
+				}
+				debug.Debugf("delay mail ...")
+				continue
+			}
+			err := s.svr.repo.SaveEmail(to, s.from.String(), buf.String(), s.data.Bytes())
+			if err != nil {
+				s.printf("%3d save email error", CodeLocalErrorInProcessing)
+				return
+			}
 		}
 	}
 	s.responseOK()
 	return
+}
+
+func parseDomainFromAddress(address string) string {
+	index := strings.Index(address, "@")
+	if index >= 0 {
+		return address[index+1:]
+	}
+	return etc.Conf().DomainName
 }
 
 //------------------
@@ -321,7 +348,7 @@ func (s *session) onHelp(args string) {
 func (s *session) onHelo(args string) {
 	if len(args) > 0 {
 		s.responseOK()
-		s.state = stateExpectCmdMail | stateExpectCmdAuth
+		s.setState(stateExpectCmdMail | stateExpectCmdAuth)
 	} else {
 		s.responseSyntaxError()
 	}
@@ -331,7 +358,7 @@ func (s *session) onHelo(args string) {
 func (s *session) onEhlo(args string) {
 	if len(args) > 0 {
 		s.printf(extString)
-		s.state = stateExpectCmdMail | stateExpectCmdAuth
+		s.setState(stateExpectCmdMail | stateExpectCmdAuth)
 	} else {
 		s.responseSyntaxError()
 	}
@@ -369,17 +396,30 @@ func (s *session) onRset(args string) {
 		s.responseErrorInParameter()
 		return
 	}
+	s.reset()
+	s.responseOK()
+}
+
+func (s *session) reset() {
 	s.from = nil
 	s.tos = s.tos[0:0]
 	s.auth = s.auth[0:0]
 	s.data.Reset()
-	s.state = stateExpectCmdMail | stateExpectCmdAuth
-	s.responseOK()
+	s.setState(stateExpectCmdMail | stateExpectCmdAuth)
 }
 
 // STARTTLS
 func (s *session) onStartTLS(args string) (quit bool) {
-	s.commandNotImplemented(STARTTLS)
+	if s.svr.tlsConfig == nil {
+		s.commandNotImplemented(STARTTLS)
+		return
+	}
+	tlsConn := tls.Server(s.nativeConn, s.svr.tlsConfig)
+	s.nativeConn = tlsConn
+	s.conn = textproto.NewConn(tlsConn)
+	s.tls = true
+	s.reset()
+	s.responseOK()
 	return
 }
 
@@ -406,7 +446,7 @@ func (s *session) onMail(args string) (quit bool) {
 		s.from = addr
 		s.tos = s.tos[0:0]
 		s.data.Reset()
-		s.state = stateExpectCmdRcpt
+		s.setState(stateExpectCmdRcpt)
 		s.responseOK()
 	}
 	return
@@ -434,7 +474,7 @@ func (s *session) onRcpt(args string) (quit bool) {
 	}
 	s.responseOK()
 	s.tos = append(s.tos, addr)
-	s.state = stateExpectCmdData | stateExpectCmdRcpt
+	s.setState(stateExpectCmdData | stateExpectCmdRcpt)
 	return
 }
 
@@ -445,7 +485,7 @@ func (s *session) onData(args string) (quit bool) {
 		return
 	}
 	s.responseStartMailInput()
-	s.state = stateMailInput
+	s.setState(stateMailInput)
 	return
 }
 
