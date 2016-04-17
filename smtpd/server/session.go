@@ -21,7 +21,7 @@ var (
 	toRegexp   = regexp.MustCompile("[Tt][Oo]:(.+)")
 )
 
-const crlf = "\n\r"
+const crlf = "\r\n"
 
 //---------
 // command
