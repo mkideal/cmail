@@ -1,0 +1,15 @@
+# enable debug mode
+debug: true
+
+# port
+port: 8080
+
+# mysql data source
+db-source: "root:wang182764@/"
+
+# email domain name
+domain-name: "mkideal.com"
+
+max-session-size: 8096
+
+service-info: "Service ready"
