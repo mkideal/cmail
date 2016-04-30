@@ -295,32 +295,45 @@ func (s *session) appendData(args string) (quit bool) {
 }
 
 func (s *session) complete() (quit bool) {
-	quit = true
-	if s.from != nil && s.tos != nil && len(s.tos) > 0 {
-		buf := bytes.NewBufferString("")
-		for i, to := range s.tos {
-			if i != 0 {
-				buf.WriteByte(',')
-			}
-			buf.WriteString(to.String())
+	if s.from == nil || s.tos == nil || len(s.tos) == 0 {
+		s.responseBadSequence()
+		return
+	}
+	buf := bytes.NewBufferString("")
+	for i, to := range s.tos {
+		if i != 0 {
+			buf.WriteByte(',')
 		}
-		for _, to := range s.tos {
-			if domain := parseDomainFromAddress(to.Address); domain != etc.Conf().DomainName {
-				// forward mail
-				fromDomain := parseDomainFromAddress(s.from.Address)
-				if fromDomain != etc.Conf().DomainName && !etc.Conf().AllowDelay {
-					//TODO: handle the error
-					debug.Debugf("cannot delay mail")
-					continue
-				}
+		buf.WriteString(to.String())
+	}
+
+	var (
+		fromAddrStr  = s.from.String()
+		toAddrStr    = buf.String()
+		mailData     = s.data.Bytes()
+		serverDomain = etc.Conf().DomainName
+		allowDelay   = etc.Conf().AllowDelay
+	)
+
+	for _, to := range s.tos {
+		toDomain := parseDomainFromAddress(to.Address)
+		if toDomain != serverDomain {
+			// delay mail
+			fromDomain := parseDomainFromAddress(s.from.Address)
+			if fromDomain != serverDomain && !aAllowDelay {
+				//TODO: handle the error
+				debug.Debugf("cannot delay mail")
+			} else {
 				debug.Debugf("delay mail ...")
-				continue
+				delayMail(toDomain, fromAddrStr, to.Address, mailData)
 			}
-			err := s.svr.repo.SaveEmail(to, s.from.String(), buf.String(), s.data.Bytes())
-			if err != nil {
-				s.printf("%3d save email error", CodeLocalErrorInProcessing)
-				return
-			}
+			continue
+		}
+
+		err := s.svr.repo.SaveEmail(to, fromAddrStr, toAddrStr, mailData)
+		if err != nil {
+			s.responseLocalError()
+			return
 		}
 	}
 	s.responseOK()
@@ -549,11 +562,18 @@ func (s *session) responseUserNotLocal() {
 }
 
 func (s *session) responseTooManyRecipients() {
+	s.errCount++
 	s.printf("%3d too many recipients", CodeInsufficientSystemStorage)
 }
 
 func (s *session) responseExceededStorage() {
+	s.errCount++
 	s.printf("%3d exceeded storage", CodePermExceededStorageAllocation)
+}
+
+func (s *session) responseLocalError() {
+	s.errCount++
+	s.printf("%3d save email error", CodeLocalErrorInProcessing)
 }
 
 func (s *session) printf(format string, args ...interface{}) {

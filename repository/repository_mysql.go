@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	sqlCreateDatabase = "CREATE DATABASE IF NOT EXISTS `smtpd` ENGINE=InnoDB DEFAULT CHARSET=utf8"
+	sqlCreateDatabase = "CREATE DATABASE IF NOT EXISTS `smtpd` DEFAULT CHARSET=utf8"
 
 	sqlUseDatabase = "USE smtpd"
 
